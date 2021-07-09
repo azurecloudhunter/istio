@@ -26,6 +26,7 @@ spec:
     - dev
     - --region
     - dev
+    - --validate=false
 
 ---
 

@@ -16,6 +16,8 @@ build :
 
 build-metrics :
 	docker build pymetric -t pymetric:local
+	docker tag pymetric:local localhost:5000/pymetric
+	docker push localhost:5000/pymetric
 	kind load docker-image pymetric:local
 
 delete:
@@ -27,6 +29,9 @@ create :
 	# create the cluster and wait for ready
 	@# this will fail harmlessly if the cluster exists
 	@# default cluster name is kind
+
+	# setup local registry
+	$(shell ./setup-local-registry.sh)
 
 	@kind create cluster --config deploy/kind/kind.yaml
 
@@ -44,6 +49,9 @@ create :
 	@kubectl apply -f deploy/kiali
 	sleep 5
 	@kubectl apply -f ${ISTIO_HOME}/samples/addons/kiali.yaml
+
+	# Connect registry and kind networks
+	docker network connect "kind" "kind-registry"
 
 deploy : build-metrics
 	# deploy the app
