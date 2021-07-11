@@ -16,4 +16,5 @@ Steps
 6) ./patch.sh  #this recompiles the lib.rs, resets the config map and kicks the ngsa service
 7) kubectl get pods #do this until everything looks up
 8) kubectl apply -f cmdemoyml/filter.yml  #this actually tells istio/envoy to use the filter 
-9) curl -v http://$GATEWAY_URL/healthz #this calls the ngsa app. look for the header you know ngsa did not put in.
+9) istiotcl proxy status #  look for synced synced in the ngsa pod line
+10) curl -v http://$GATEWAY_URL/healthz #this calls the ngsa app. look for the header you know ngsa did not put in.
