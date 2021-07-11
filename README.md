@@ -11,10 +11,11 @@ Steps
 1) source senv.sh  #this switches thte path and sets istio to 1.10.2
 2) make -f Makelocal build #this builds everything 
 3) source tcall.sh # this exports all the ports in use by apps behind gateway to env vars.
-4) edit cmdemoyml/filter.yml #change the port and ip to what you see in the $GATEWAY_URL variable
-5) edit the src/lib.rs line 118 and put in correct IP #switch the IP address in code
-6) ./patch.sh  #this recompiles the lib.rs, resets the config map and kicks the ngsa service
-7) kubectl get pods #do this until everything looks up
-8) kubectl apply -f cmdemoyml/filter.yml  #this actually tells istio/envoy to use the filter 
-9) istioctl proxy-status #  look for synced synced in the ngsa pod line
-10) curl -v http://$GATEWAY_URL/healthz #this calls the ngsa app. look for the header you know ngsa did not put in.
+4) env #see the new variables including GATEWAY_URL
+5) edit cmdemoyml/filter.yml #change the port and ip to what you see in the $GATEWAY_URL variable
+6) edit the src/lib.rs line 118 and put in correct IP #switch the IP address in code
+7) ./patch.sh  #this recompiles the lib.rs, resets the config map and kicks the ngsa service
+8) kubectl get pods #do this until everything looks up
+9) kubectl apply -f cmdemoyml/filter.yml  #this actually tells istio/envoy to use the filter 
+10) istioctl proxy-status #  look for synced synced in the ngsa pod line
+11) curl -v http://$GATEWAY_URL/healthz #this calls the ngsa app. look for the header you know ngsa did not put in.
