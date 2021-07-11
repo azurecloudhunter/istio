@@ -1,229 +1,103 @@
-use log::{debug, warn};
-use proxy_wasm::{
-    traits::{Context, HttpContext, RootContext},
-    types::{Action, LogLevel},
-};
-use serde::Deserialize;
+use log::trace;
+use proxy_wasm::traits::*;
+use proxy_wasm::types::*;
+use std::time::Duration;
 use serde_json::{Map, Value};
-use std::{cell::RefCell, collections::HashMap, error::Error, time::Duration};
-
-const POWERED_BY: &str = "header-augmenting-filter";
-const CACHE_KEY: &str = "cache";
-const INITIALISATION_TICK: Duration = Duration::from_secs(2);
-
-#[derive(Deserialize, Debug)]
-#[serde(default)]
-struct FilterConfig {
-    /// The Envoy cluster name housing a HTTP service that will provide headers
-    /// to add to requests.
-    header_providing_service_cluster: String,
-
-    /// The path to call on the HTTP service providing headers.
-    header_providing_service_path: String,
-
-    /// The authority to set when calling the HTTP service providing headers.
-    header_providing_service_authority: String,
-
-    /// The length of time to keep headers cached.
-    #[serde(with = "serde_humanize_rs")]
-    header_cache_expiry: Duration,
-}
-
-impl Default for FilterConfig {
-    fn default() -> Self {
-        FilterConfig {
-            header_providing_service_cluster: "healthcluster".to_owned(),
-            header_providing_service_path: "/pymetric".to_owned(),
-            header_providing_service_authority: "172.19.0.2".to_owned(),
-            header_cache_expiry: Duration::from_secs(360),
-        }
-    }
-}
-
-thread_local! {
-    static CONFIGS: RefCell<HashMap<u32, FilterConfig>> = RefCell::new(HashMap::new())
-}
-
+use std::{error::Error};
 #[no_mangle]
 pub fn _start() {
     proxy_wasm::set_log_level(LogLevel::Trace);
-    proxy_wasm::set_root_context(|context_id| -> Box<dyn RootContext> {
-        CONFIGS.with(|configs| {
-            configs
-                .borrow_mut()
-                .insert(context_id, FilterConfig::default());
-        });
-
-        Box::new(RootHandler { context_id })
-    });
-    proxy_wasm::set_http_context(|_context_id, _root_context_id| -> Box<dyn HttpContext> {
-        Box::new(HttpHandler {})
-    })
+    proxy_wasm::set_root_context(|_| -> Box<dyn RootContext> { Box::new(HttpHeadersRoot) });
 }
 
-struct RootHandler {
+struct HttpHeadersRoot;
+
+impl Context for HttpHeadersRoot {
+}
+
+impl RootContext for HttpHeadersRoot {
+    fn get_type(&self) -> Option<ContextType> {
+        Some(ContextType::HttpContext)
+    }
+
+    fn create_http_context(&self, context_id: u32) -> Option<Box<dyn HttpContext>> {
+        Some(Box::new(HttpHeaders { context_id }))
+    }
+
+}
+
+struct HttpHeaders {
     context_id: u32,
 }
 
-impl RootContext for RootHandler {
-    fn on_configure(&mut self, _config_size: usize) -> bool {
-        // Check for the mandatory filter configuration stanza.
-        let configuration: Vec<u8> = match self.get_configuration() {
-            Some(c) => c,
-            None => {
-                warn!("configuration missing");
-
-                return false;
-            }
-        };
-
-        // Parse and store the configuration.
-        match serde_json::from_slice::<FilterConfig>(configuration.as_ref()) {
-            Ok(config) => {
-                debug!("configuring {}: {:?}", self.context_id, config);
-                CONFIGS.with(|configs| configs.borrow_mut().insert(self.context_id, config));
-            }
-            Err(e) => {
-                warn!("failed to parse configuration: {:?}", e);
-
-                return false;
+impl Context for HttpHeaders {
+    fn on_http_call_response(&mut self, _: u32, _: usize, _body_size: usize, _: usize) {
+        let myvec = self.get_http_call_response_headers(); 
+        if myvec.is_empty(){
+            self.send_http_response(500, vec![], Some(b"no headers!"));
+        }
+        let mut stuff = Vec::new();
+        for (name, value) in myvec {
+            if name.to_lowercase().starts_with("x-"){
+               stuff.push(format!("\"{}\":\"{}\"",&name,&value));
             }
         }
-
-        // Configure an initialisation tick and the cache.
-        self.set_tick_period(INITIALISATION_TICK);
-        self.set_shared_data(CACHE_KEY, None, None).is_ok()
-    }
-
-    fn on_tick(&mut self) {
-        // Log the action that is about to be taken.
-        match self.get_shared_data(CACHE_KEY) {
-            (None, _) => debug!("initialising cached headers"),
-            (Some(_), _) => debug!("refreshing cached headers"),
-        }
-
-        CONFIGS.with(|configs| {
-            configs.borrow().get(&self.context_id).map(|config| {
-                // We could be in the initialisation tick here so update our
-                // tick period to the configured expiry before doing anything.
-                // This will be reset to an initialisation tick upon failures.
-                self.set_tick_period(config.header_cache_expiry);
-
-                // Dispatch an async HTTP call to the configured cluster.
-                self.dispatch_http_call(
-                    "healthcluster",
-                    vec![
-                        (":method", "GET"),
-                        (":path", "/pymetric"),
-                        (":authority", "172.19.0.2"),
-                    ],
-                    None,
-                    vec![],
-                    Duration::from_secs(5),
-                )
-                .map_err(|e| {
-                    // Something went wrong instantly. Reset to an
-                    // initialisation tick for a quick retry.
-                    self.set_tick_period(INITIALISATION_TICK);
-
-                    warn!("failed calling header providing service: {:?}", e)
-                })
-            })
-        });
+        let joined = format!("{{{}}}",stuff.join(","));
+        self.set_shared_data("perfdata",Some(joined.as_bytes()),None).unwrap();
+        self.resume_http_request();
+        return;
     }
 }
 
-impl Context for RootHandler {
-    fn on_http_call_response(
-        &mut self,
-        _token_id: u32,
-        _num_headers: usize,
-        body_size: usize,
-        _num_trailers: usize,
-    ) {
-        // Gather the response body of previously dispatched async HTTP call.
-        let body = match self.get_http_call_response_body(0, body_size) {
-            Some(body) => body,
-            None => {
-                warn!("header providing service returned empty body");
-
-                return;
-            }
-        };
-
-        // Store the body in the shared cache.
-        match self.set_shared_data(CACHE_KEY, Some(&body), None) {
-            Ok(()) => debug!(
-                "refreshed header cache with: {}",
-                String::from_utf8(body.clone()).unwrap()
-            ),
-
-            Err(e) => {
-                warn!("failed storing header cache: {:?}", e);
-
-                // Reset to an initialisation tick for a quick retry.
-                self.set_tick_period(INITIALISATION_TICK)
-            }
-        }
-    }
+fn parse_sjson(res: &str) -> Result<Map<String, serde_json::Value>, Box<dyn Error>> {
+    Ok(serde_json::from_str::<Value>(&res)?
+        .as_object()
+        .unwrap()
+        .clone())
 }
 
-struct HttpHandler {}
+impl HttpContext for HttpHeaders {
+    fn on_http_request_headers(&mut self, _: usize) -> Action {
+        let res = self.dispatch_http_call(
+            "healthcluster",
+            vec![
+                (":method", "GET"),
+                (":path", "/pymetric"),
+                (":authority", "172.19.0.2"),
+            ],
+            None,
+            vec![],
+            Duration::from_secs(5),
+        );
+        if res.is_err() {
+            let ss = format!("Error dispatch json: {:?}", res);
+            self.send_http_response(500, vec![], Some(ss.as_bytes()));
+        }
+        Action::Pause
+    }
 
-impl HttpContext for HttpHandler {
-    fn on_http_response_headers(&mut self, _num_headers: usize) -> Action {
-        match self.get_shared_data(CACHE_KEY) {
+    fn on_http_response_headers(&mut self, _: usize) -> Action {
+        match self.get_shared_data("perfdata") {
             (Some(cache), _) => {
-                debug!(
-                    "using existing header cache: {}",
-                    String::from_utf8(cache.clone()).unwrap()
-                );
-                    let mystr = String::from_utf8(cache.clone()).unwrap();
-                    self.set_http_response_header("x-thingy",Some(&mystr));
-                /*
-                match self.parse_headers(&cache) {
-                    Ok(headers) => {
-                        for (name, value) in headers {
-                            let xheader = format!("x-metric-{}",name);
-                            self.set_http_response_header(&xheader, value.as_str())
-                        }
-                    }
-                    Err(e) => warn!("no usable headers cached: {:?}", e),
+                let mystr =  String::from_utf8(cache.clone()).unwrap();
+                let headermap = parse_sjson(&mystr).unwrap();
+                for (n, v) in headermap {
+                    self.set_http_response_header(&n,Some(v.as_str().unwrap()));
                 }
-                */
-
-                Action::Continue
             }
             (None, _) => {
-                warn!("filter not initialised");
-
                 self.send_http_response(
                     500,
-                    vec![("Powered-By", POWERED_BY)],
-                    Some(b"Filter not initialised"),
+                    vec![("Powered-By", "example proxy")],
+                    Some(b"shared headers missing"),
                 );
 
-                Action::Pause
             }
         }
+        Action::Continue
     }
-}
 
-impl Context for HttpHandler {}
-
-impl HttpHandler {
-    fn parse_headers(&self, res: &[u8]) -> Result<Map<String, Value>, Box<dyn Error>> {
-        Ok(serde_json::from_slice::<Value>(&res)?
-            .as_object()
-            .unwrap()
-            .clone())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn todo() {
-        assert_eq!(2 + 2, 4);
+    fn on_log(&mut self) {
+        trace!("#{} completed.", self.context_id);
     }
 }
