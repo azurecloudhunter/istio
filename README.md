@@ -1,6 +1,6 @@
 # Istio Filter
 
-this is the first stab at getting filters working in the code spaces environment. it is not intended as final solution but as a template for integrating afilter as the team sees fit.
+this is the first stab at getting filters working in the code spaces environment. it is not intended as final solution but as a template for integrating a filter as the team sees fit.
 
 
 
