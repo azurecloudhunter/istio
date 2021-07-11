@@ -15,7 +15,6 @@ build:
 	rustup update
 	rustup target add wasm32-unknown-unknown --toolchain nightly
 	rustup default nightly
-	cargo build --release --target=wasm32-unknown-unknown
 	kind delete cluster --name cmdemo
 	./kindlocalreg.sh cmdemo
 	docker pull ghcr.io/retaildevcrews/ngsa-app:beta

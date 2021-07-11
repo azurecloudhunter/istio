@@ -1,4 +1,5 @@
 rm -f wasm_header_poc.wasm
+cargo build --release --target=wasm32-unknown-unknown
 cp target/wasm32-unknown-unknown/release/wasm_header_poc.wasm .
 kubectl delete --ignore-not-found -n default cm wasm-poc-filter
 kubectl create cm -n default wasm-poc-filter --from-file=wasm_header_poc.wasm
