@@ -1,6 +1,6 @@
 # Istio Filter
 
-this is the first stab at getting filters working in the code spaces environment. it is not intended as final solution but as a template for integrating afilter as the team sees fit.
+this is the first stab at getting filters working in the code spaces environment. it is not intended as final solution but as a template for integrating a filter as the team sees fit.
 
 
 
@@ -16,4 +16,5 @@ Steps
 6) ./patch.sh  #this recompiles the lib.rs, resets the config map and kicks the ngsa service
 7) kubectl get pods #do this until everything looks up
 8) kubectl apply -f cmdemoyml/filter.yml  #this actually tells istio/envoy to use the filter 
-9) curl -v http://$GATEWAY_URL/healthz #this calls the ngsa app. look for the header you know ngsa did not put in.
+9) istioctl proxy-status #  look for synced synced in the ngsa pod line
+10) curl -v http://$GATEWAY_URL/healthz #this calls the ngsa app. look for the header you know ngsa did not put in.
