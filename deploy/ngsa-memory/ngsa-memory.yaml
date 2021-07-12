@@ -45,6 +45,9 @@ spec:
       containers:
       - name: ngsa
         image: ghcr.io/retaildevcrews/ngsa-app:beta
+        resources:
+          limits:
+            cpu: "500m"
         args:
           - --in-memory
           - --prometheus
